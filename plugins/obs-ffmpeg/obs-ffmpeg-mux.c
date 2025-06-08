@@ -1136,6 +1136,30 @@ error:
 	return NULL;
 }
 
+static inline void purge_buffer_on_save(struct ffmpeg_muxer *stream)
+{
+	const size_t keyframes = stream->keyframes - 1;
+
+	if (keyframes <= 0) {
+		return; // Already have 1 or fewer keyframes
+	}
+
+	while (stream->packets.size > 0) {
+		struct encoder_packet pkt;
+		deque_peek_front(&stream->packets, &pkt, sizeof(pkt));
+
+		if (pkt.type == OBS_ENCODER_VIDEO && pkt.keyframe) {
+			keyframes--;
+			if (keyframes == 0) {
+				// This is the keyframe we want to keep, stop here
+				break;
+			}
+		}
+
+		purge_front(stream);
+	}
+}
+
 static void replay_buffer_save(struct ffmpeg_muxer *stream)
 {
 	const size_t size = sizeof(struct encoder_packet);
@@ -1176,6 +1200,8 @@ static void replay_buffer_save(struct ffmpeg_muxer *stream)
 	}
 
 	generate_filename(stream, &stream->path, true);
+
+	purge_buffer_on_save(stream);
 
 	os_atomic_set_bool(&stream->muxing, true);
 	stream->mux_thread_joinable = pthread_create(&stream->mux_thread, NULL, replay_buffer_mux_thread, stream) == 0;
